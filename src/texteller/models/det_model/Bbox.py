@@ -15,7 +15,7 @@ class Point:
 
 
 class Bbox:
-    THREADHOLD = 0.4
+    THREADHOLD = 0.35
 
     def __init__(self, x, y, h, w, label: str = None, confidence: float = 0, content: str = None):
         self.p = Point(x, y)
@@ -24,6 +24,7 @@ class Bbox:
         self.label = label
         self.confidence = confidence
         self.content = content
+        self.ord = None
 
     @property
     def ul_point(self) -> Point:
@@ -47,9 +48,12 @@ class Bbox:
             (self.p.y >= other.p.y and self.ll_point.y <= other.ll_point.y)
             or (self.p.y <= other.p.y and self.ll_point.y >= other.ll_point.y)
         ):
+            # print('T')
             return True
         if self.ll_point.y <= other.p.y or self.p.y >= other.ll_point.y:
+            # print('F')
             return False
+        # print('comp')
         return 1.0 * abs(self.p.y - other.p.y) / max(self.h, other.h) < self.THREADHOLD
     
     def __lt__(self, other) -> bool:
@@ -61,6 +65,16 @@ class Bbox:
         else:
             return self.p.x < other.p.x
     
+    # def __lt__(self, other) -> bool:
+    #     '''
+    #     from top to bottom, from left to right
+    #     '''
+    #     if self.p.y != other.p.y:
+    #         return self.p.y < other.p.y
+    #     else:
+    #         return self.p.x < other.p.x
+    
+
     def __repr__(self) -> str:
         return f"Bbox(upper_left_point={self.p}, h={self.h}, w={self.w}), label={self.label}, confident={self.confidence}, content={self.content})"
 

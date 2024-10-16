@@ -3,6 +3,8 @@ import heapq
 import cv2
 import time
 import numpy as np
+import math
+import pytesseract
 
 from collections import Counter
 from typing import List
@@ -14,8 +16,37 @@ from ..det_model.Bbox import Bbox, draw_bboxes
 from ..ocr_model.utils.inference import inference as latex_rec_predict
 from ..ocr_model.utils.to_katex import to_katex, change_all
 
+from ocr_for_text import extract_text_from_image
 MAXV = 999999999
 
+ERROR_Y = 5
+ERROR_X = 5
+MARGIN = 27
+
+
+def remove_noise(image):
+    # Dividimos la imagen en sus canales B, G, R
+    b_channel, g_channel, r_channel = cv2.split(image)
+    
+    # Definimos el kernel para "sharpening"
+    kernel = np.array([[0, -1, 0], [-1, 4.9, -1], [0, -1, 0]])
+
+    # Aplicamos el filtro y denoising a cada canal por separado
+    sharpen_b = cv2.filter2D(b_channel, -1, kernel)
+    sharpen_g = cv2.filter2D(g_channel, -1, kernel)
+    sharpen_r = cv2.filter2D(r_channel, -1, kernel)
+
+    denoised_b = cv2.fastNlMeansDenoising(sharpen_b, None, h=30, templateWindowSize=7, searchWindowSize=21)
+    denoised_g = cv2.fastNlMeansDenoising(sharpen_g, None, h=30, templateWindowSize=7, searchWindowSize=21)
+    denoised_r = cv2.fastNlMeansDenoising(sharpen_r, None, h=30, templateWindowSize=7, searchWindowSize=21)
+
+    # Combinamos los canales de nuevo
+    denoised_image = cv2.merge([denoised_b, denoised_g, denoised_r])
+
+    # Guardamos el resultado
+    cv2.imwrite('imagen_denoised_color.jpg', denoised_image)
+
+    return denoised_image
 
 def mask_img(img, bboxes: List[Bbox], bg_color: np.ndarray) -> np.ndarray:
     mask_img = img.copy()
@@ -52,6 +83,7 @@ def split_conflict(ocr_bboxes: List[Bbox], latex_bboxes: List[Bbox]) -> List[Bbo
     # log results
     for idx, bbox in enumerate(bboxes):
         bbox.content = str(idx)
+        
     draw_bboxes(Image.fromarray(img), bboxes, name="before_split_confict.png")
 
     assert len(bboxes) > 1
@@ -118,6 +150,7 @@ def split_conflict(ocr_bboxes: List[Bbox], latex_bboxes: List[Bbox]) -> List[Bbo
     # log results
     for idx, bbox in enumerate(res):
         bbox.content = str(idx)
+        bbox.ord = idx
     draw_bboxes(Image.fromarray(img), res, name="after_split_confict.png")
 
     return res
@@ -131,6 +164,50 @@ def slice_from_image(img: np.ndarray, ocr_bboxes: List[Bbox]) -> List[np.ndarray
         sliced_img = img[y:y+h, x:x+w]
         sliced_imgs.append(sliced_img)
     return sliced_imgs
+
+
+def union_bboxes(ocr_bboxes):
+    new_ocr_bboxes = []
+
+    if(len(ocr_bboxes)==0):
+        return new_ocr_bboxes
+    
+    first_y = ocr_bboxes[0].p.y
+    min_x = ocr_bboxes[0].p.x
+    max_x = min_x+ocr_bboxes[0].w
+    tag = ocr_bboxes[0].ord
+
+    i = 1
+    while i < len(ocr_bboxes):
+        # print(f'ocr_bboxes[i].p.x: {ocr_bboxes[i-1].p.x}')
+        if ocr_bboxes[i].content == '15':
+            print('aqui')
+            print(ocr_bboxes[i-2].p.y+ocr_bboxes[i-2].h)
+            print(ocr_bboxes[i-1].p.y)
+            print(ocr_bboxes[i-1].p.y+ocr_bboxes[i-1].h)
+            print(ocr_bboxes[i].p.y)
+            # print(f'ocr_bboxes[2].p.y: {ocr_bboxes[i].p.y}')
+            # print(f'content: {ocr_bboxes[i].content}')
+            # print(f'ocr_bboxes[1].p.x: {ocr_bboxes[i-1].p.x}')
+            # print(f'ocr_bboxes[2].p.x - ocr_bboxes[1].p.x: {ocr_bboxes[i].p.y-ocr_bboxes[i-1].p.y}')
+
+        if (int(ocr_bboxes[i].content) == int(ocr_bboxes[i-1].content) + 1) and (abs(ocr_bboxes[i].p.x-min_x)<70) and (abs(ocr_bboxes[i].p.x+ocr_bboxes[i].w-max_x)<70):
+            min_x = min(min_x,ocr_bboxes[i].p.x)
+            max_x = max(max_x,ocr_bboxes[i].p.x+ocr_bboxes[i].w)
+        else:
+            
+            bbox = Bbox(max(0,math.floor(min_x-ERROR_X)),max(0,math.floor(first_y-ERROR_Y)),math.ceil(ocr_bboxes[i-1].p.y+ocr_bboxes[i-1].h-max(0,math.floor(first_y-ERROR_Y))+ERROR_Y),math.ceil(max_x-math.floor(min_x-ERROR_X)+ERROR_X),'text')
+            new_ocr_bboxes.append(bbox)
+            first_y = int(ocr_bboxes[i].p.y)
+            min_x = int(ocr_bboxes[i].p.x)
+            max_x = int(min_x+ocr_bboxes[i].w)
+            bbox.ord = tag
+            tag = ocr_bboxes[i].ord
+        i += 1
+    bbox = Bbox(max(0,math.floor(min_x-ERROR_X)),max(0,math.floor(first_y-ERROR_Y)),math.ceil(ocr_bboxes[i-1].p.y+ocr_bboxes[i-1].h-max(0,math.floor(first_y-ERROR_Y))+ERROR_Y),math.ceil(max_x-math.floor(min_x-ERROR_X)+ERROR_X),'text')
+    bbox.ord = tag
+    new_ocr_bboxes.append(bbox)
+    return new_ocr_bboxes
 
 
 def mix_inference(
@@ -149,6 +226,9 @@ def mix_inference(
     '''
     global img
     img = cv2.imread(img_path)
+    width = img.shape[1]
+
+    img = remove_noise(img)
     corners = [tuple(img[0, 0]), tuple(img[0, -1]),
                tuple(img[-1, 0]), tuple(img[-1, -1])]
     bg_color = np.array(Counter(corners).most_common(1)[0][0])
@@ -188,17 +268,24 @@ def mix_inference(
     draw_bboxes(Image.fromarray(img), ocr_bboxes, name="ocr_bboxes(merged).png")
     ocr_bboxes = split_conflict(ocr_bboxes, latex_bboxes)
     ocr_bboxes = list(filter(lambda x: x.label == "text", ocr_bboxes))
+    ocr_bboxes = union_bboxes(ocr_bboxes)
+    draw_bboxes(Image.fromarray(img), ocr_bboxes, name="ocr_bboxes(union).png")
 
     sliced_imgs: List[np.ndarray] = slice_from_image(img, ocr_bboxes)
     start_time = time.time()
-    rec_predictions, _ = rec_model(sliced_imgs)
+    rec_predictions = [extract_text_from_image(image) for image in sliced_imgs]
+
+    # for rec in rec_predictions:
+    #     print(rec)
+
+    # rec_predictions, _ = rec_model(sliced_imgs)
     end_time = time.time()
     print(f"ocr_rec_model time: {end_time - start_time:.2f}s")
 
-    assert len(rec_predictions) == len(ocr_bboxes)
+    # assert len(rec_predictions) == len(ocr_bboxes)
     for content, bbox in zip(rec_predictions, ocr_bboxes):
-        bbox.content = content[0]
-    
+        bbox.content = content
+
     latex_imgs =[]
     for bbox in latex_bboxes:
         latex_imgs.append(img[bbox.p.y:bbox.p.y + bbox.h, bbox.p.x:bbox.p.x + bbox.w])
@@ -212,16 +299,33 @@ def mix_inference(
         if bbox.label == "embedding":
             bbox.content = " $" + bbox.content + "$ "
         elif bbox.label == "isolated":
-            bbox.content = '\n\n' + r"$$" + bbox.content + r"$$" + '\n\n'
+            bbox.content = '\n\n' + r"\begin{align}" + bbox.content + r"\end{align}" + '\n\n'
 
-
-    bboxes = sorted(ocr_bboxes + latex_bboxes)
+    # personas_ordenadas = sorted(personas, key=lambda persona: persona.edad)
+    bboxes = sorted(ocr_bboxes+latex_bboxes,key=lambda x:x.ord)
+    # bboxes = sorted(ocr_bboxes + latex_bboxes)
     if bboxes == []:
         return ""
 
     md = ""
     prev = Bbox(bboxes[0].p.x, bboxes[0].p.y, -1, -1, label="guard")
     for curr in bboxes:
+        print('aqui')
+        
+        if not prev.same_row(curr) and curr.label!="isolated" and prev.label!="isolated":
+
+            print(f'prev.ll_point.y {prev.ll_point.y}')
+            print(f'curr.ul_point.y {curr.ul_point.y}')
+            if max(0,(curr.ul_point.y - prev.ll_point.y))>10:
+                print('entro')
+                print(curr.content)
+                md += r'\vspace{0.25cm}'
+                md += '\n\n'
+            elif prev.ur_point.x/width < 0.7:
+                md += '\n\n'
+            else:
+                md += " "
+            
         # Add the formula number back to the isolated formula
         if (
             prev.label == "isolated"
@@ -234,13 +338,16 @@ def mix_inference(
 
             if re.search(r'\\tag\{.*\}$', md[:-4]) is not None:
                 # in case of multiple tag
-                md = md[:-5] + f', {curr.content}' + '}' + md[-4:]
+                md = md[:-5] + f', {curr.content}' + '}' + md[-11:]
             else:
-                md = md[:-4] + f'\\tag{{{curr.content}}}' + md[-4:]
+                md = md[:-13] + f'\\tag{{{curr.content}}}' + md[-13:]
             continue
 
-        if not prev.same_row(curr):
-            md += " "
+        # if prev.ord == 31:
+        #     print('---------------------------------------------------------------------------------------------------------------------------------------------------')
+        #     print('----------------------------------------------AQUI----------------------------------------------------------------')
+        # print(prev.content)
+        
 
         if curr.label == "embedding":
             # remove the bold effect from inline formulas

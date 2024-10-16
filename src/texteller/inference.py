@@ -4,15 +4,15 @@ import cv2 as cv
 
 from pathlib import Path
 from onnxruntime import InferenceSession
-from texteller.models.thrid_party.paddleocr.infer import predict_det, predict_rec
-from texteller.models.thrid_party.paddleocr.infer import utility
+from models.thrid_party.paddleocr.infer import predict_det, predict_rec
+from models.thrid_party.paddleocr.infer import utility
 
-from texteller.models.utils import mix_inference
-from texteller.models.ocr_model.utils.to_katex import to_katex
-from texteller.models.ocr_model.utils.inference import inference as latex_inference
+from models.utils import mix_inference
+from models.ocr_model.utils.to_katex import to_katex
+from models.ocr_model.utils.inference import inference as latex_inference
 
-from texteller.models.ocr_model.model.TexTeller import TexTeller
-from texteller.models.det_model.inference import PredictConfig
+from models.ocr_model.model.TexTeller import TexTeller
+from models.det_model.inference import PredictConfig
 
 
 if __name__ == '__main__':
