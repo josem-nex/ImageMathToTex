@@ -1,1 +1,3 @@
 texteller
+tesseract
+open-cv

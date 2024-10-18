@@ -16,7 +16,7 @@ from ..det_model.Bbox import Bbox, draw_bboxes
 from ..ocr_model.utils.inference import inference as latex_rec_predict
 from ..ocr_model.utils.to_katex import to_katex, change_all
 
-from ocr_for_text import extract_text_from_image
+from texteller.ocr_for_text import extract_text_from_image
 MAXV = 999999999
 
 ERROR_Y = 5
@@ -179,18 +179,6 @@ def union_bboxes(ocr_bboxes):
 
     i = 1
     while i < len(ocr_bboxes):
-        # print(f'ocr_bboxes[i].p.x: {ocr_bboxes[i-1].p.x}')
-        if ocr_bboxes[i].content == '15':
-            print('aqui')
-            print(ocr_bboxes[i-2].p.y+ocr_bboxes[i-2].h)
-            print(ocr_bboxes[i-1].p.y)
-            print(ocr_bboxes[i-1].p.y+ocr_bboxes[i-1].h)
-            print(ocr_bboxes[i].p.y)
-            # print(f'ocr_bboxes[2].p.y: {ocr_bboxes[i].p.y}')
-            # print(f'content: {ocr_bboxes[i].content}')
-            # print(f'ocr_bboxes[1].p.x: {ocr_bboxes[i-1].p.x}')
-            # print(f'ocr_bboxes[2].p.x - ocr_bboxes[1].p.x: {ocr_bboxes[i].p.y-ocr_bboxes[i-1].p.y}')
-
         if (int(ocr_bboxes[i].content) == int(ocr_bboxes[i-1].content) + 1) and (abs(ocr_bboxes[i].p.x-min_x)<70) and (abs(ocr_bboxes[i].p.x+ocr_bboxes[i].w-max_x)<70):
             min_x = min(min_x,ocr_bboxes[i].p.x)
             max_x = max(max_x,ocr_bboxes[i].p.x+ocr_bboxes[i].w)
@@ -228,11 +216,13 @@ def mix_inference(
     img = cv2.imread(img_path)
     width = img.shape[1]
 
+    # Remove the noise from the image.
     img = remove_noise(img)
     corners = [tuple(img[0, 0]), tuple(img[0, -1]),
                tuple(img[-1, 0]), tuple(img[-1, -1])]
     bg_color = np.array(Counter(corners).most_common(1)[0][0])
 
+    # Detect and merge mathematical formula bounding boxes using a detection model (latex_det_model).
     start_time = time.time()
     latex_bboxes = latex_det_predict(img_path, latex_det_model, infer_config)
     end_time = time.time()
@@ -243,8 +233,11 @@ def mix_inference(
     latex_bboxes = bbox_merge(latex_bboxes)
     # log results
     draw_bboxes(Image.fromarray(img), latex_bboxes, name="latex_bboxes(merged).png")
+
+    # Apply a background color to the regions determined by the provided bounding boxes.
     masked_img = mask_img(img, latex_bboxes, bg_color)
 
+    # Detect and merge text bounding boxes using an OCR detection model (det_model).
     det_model, rec_model = lang_ocr_models
     start_time = time.time()
     det_prediction, _ = det_model(masked_img)
@@ -266,26 +259,26 @@ def mix_inference(
     ocr_bboxes = bbox_merge(ocr_bboxes)
     # log results
     draw_bboxes(Image.fromarray(img), ocr_bboxes, name="ocr_bboxes(merged).png")
+
+    # Resolve overlapping conflicts between text and formula bounding boxes.
     ocr_bboxes = split_conflict(ocr_bboxes, latex_bboxes)
+
+    # Merge adjacent text bounding boxes.
     ocr_bboxes = list(filter(lambda x: x.label == "text", ocr_bboxes))
     ocr_bboxes = union_bboxes(ocr_bboxes)
     draw_bboxes(Image.fromarray(img), ocr_bboxes, name="ocr_bboxes(union).png")
 
+    # Extract and recognize the text contained in each bounding box using a text recognition model (Tesseract).
     sliced_imgs: List[np.ndarray] = slice_from_image(img, ocr_bboxes)
     start_time = time.time()
     rec_predictions = [extract_text_from_image(image) for image in sliced_imgs]
-
-    # for rec in rec_predictions:
-    #     print(rec)
-
-    # rec_predictions, _ = rec_model(sliced_imgs)
     end_time = time.time()
-    print(f"ocr_rec_model time: {end_time - start_time:.2f}s")
+    print(f"ocr_tesseract_model time: {end_time - start_time:.2f}s")
 
-    # assert len(rec_predictions) == len(ocr_bboxes)
     for content, bbox in zip(rec_predictions, ocr_bboxes):
         bbox.content = content
 
+    # Recognize and convert mathematical formulas using a formula recognition model (latex_rec_model).
     latex_imgs =[]
     for bbox in latex_bboxes:
         latex_imgs.append(img[bbox.p.y:bbox.p.y + bbox.h, bbox.p.x:bbox.p.x + bbox.w])
@@ -301,24 +294,19 @@ def mix_inference(
         elif bbox.label == "isolated":
             bbox.content = '\n\n' + r"\begin{align}" + bbox.content + r"\end{align}" + '\n\n'
 
-    # personas_ordenadas = sorted(personas, key=lambda persona: persona.edad)
+    
     bboxes = sorted(ocr_bboxes+latex_bboxes,key=lambda x:x.ord)
-    # bboxes = sorted(ocr_bboxes + latex_bboxes)
     if bboxes == []:
         return ""
 
+    # Return the result in Markdown format, with correctly formatted extracted text and mathematical formulas.
     md = ""
     prev = Bbox(bboxes[0].p.x, bboxes[0].p.y, -1, -1, label="guard")
     for curr in bboxes:
-        print('aqui')
         
         if not prev.same_row(curr) and curr.label!="isolated" and prev.label!="isolated":
 
-            print(f'prev.ll_point.y {prev.ll_point.y}')
-            print(f'curr.ul_point.y {curr.ul_point.y}')
             if max(0,(curr.ul_point.y - prev.ll_point.y))>10:
-                print('entro')
-                print(curr.content)
                 md += r'\vspace{0.25cm}'
                 md += '\n\n'
             elif prev.ur_point.x/width < 0.7:
@@ -342,12 +330,6 @@ def mix_inference(
             else:
                 md = md[:-13] + f'\\tag{{{curr.content}}}' + md[-13:]
             continue
-
-        # if prev.ord == 31:
-        #     print('---------------------------------------------------------------------------------------------------------------------------------------------------')
-        #     print('----------------------------------------------AQUI----------------------------------------------------------------')
-        # print(prev.content)
-        
 
         if curr.label == "embedding":
             # remove the bold effect from inline formulas
