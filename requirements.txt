@@ -1,3 +1,4 @@
 texteller
 tesseract
 open-cv
+ttkbootstrap

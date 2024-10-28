@@ -350,4 +350,4 @@ def mix_inference(
             curr.content = ' $' + curr.content[2:-2].strip() + '$ '
         md += curr.content
         prev = curr
-    return md.strip()
+    return r'\documentclass[a4paper,11pt ]{article}\usepackage{amsmath}\usepackage{amssymb}\usepackage{geometry}\usepackage{setspace}\geometry{left=2.5 cm, right=2.5 cm, top=2.5 cm, bottom=2.5 cm}\begin{document}'+md.strip()+r'\end{document}'
