@@ -6,7 +6,7 @@ setup(
     packages=find_packages(where='src'),  
     package_dir={'': 'src'}, 
     install_requires=[
-        "texteller", "pytesseract", "ttkbootstrap"
+        "texteller", "pytesseract", "ttkbootstrap", "opencv-python"
     ],
     entry_points={
         "console_scripts": [

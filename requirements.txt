@@ -1,4 +1,4 @@
 texteller
 pytesseract
-open-cv
+opencv-python
 ttkbootstrap
